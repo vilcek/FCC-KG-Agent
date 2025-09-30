@@ -1,0 +1,7 @@
+numpy
+pandas
+kuzu
+duckdb
+openai
+semantic_kernel
+tiktoken

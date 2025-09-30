@@ -1,0 +1,76 @@
+// ---------- NODE TABLES ----------
+CREATE NODE TABLE Site(id STRING, name STRING, PRIMARY KEY(id));
+CREATE NODE TABLE Unit(id STRING, name STRING, type STRING, PRIMARY KEY(id));
+CREATE NODE TABLE Equipment(id STRING, tag STRING, type STRING, PRIMARY KEY(id));
+CREATE NODE TABLE Stream(id STRING, name STRING, phase STRING, PRIMARY KEY(id));
+CREATE NODE TABLE Tank(id STRING, name STRING, service STRING, PRIMARY KEY(id));
+CREATE NODE TABLE SamplePoint(id STRING, name STRING, location STRING, PRIMARY KEY(id));
+
+CREATE NODE TABLE Analyzer(id STRING, name STRING, type STRING, PRIMARY KEY(id));
+CREATE NODE TABLE Instrument(id STRING, name STRING, type STRING, PRIMARY KEY(id));
+CREATE NODE TABLE Tag(id STRING, name STRING, eng_unit STRING, PRIMARY KEY(id));
+
+CREATE NODE TABLE Analyte(code STRING, name STRING, default_unit STRING, PRIMARY KEY(code));
+CREATE NODE TABLE Method(code STRING, name STRING, PRIMARY KEY(code));
+
+CREATE NODE TABLE SpecLimit(
+  id STRING,
+  limit_type STRING,      // MAX | MIN | RANGE
+  lo DOUBLE,              // nullable when MAX/MIN
+  hi DOUBLE,              // nullable when MIN/MAX
+  basis STRING,           // instantaneous | lot | rolling_mean
+  valid_from DATE,
+  valid_to DATE,
+  PRIMARY KEY(id)
+);
+
+CREATE NODE TABLE Sample(
+  id STRING,
+  draw_time TIMESTAMP,
+  receive_time TIMESTAMP,
+  collector_id STRING,
+  PRIMARY KEY(id)
+);
+
+CREATE NODE TABLE TestResult(
+  id STRING,
+  value DOUBLE,
+  unit STRING,
+  status STRING,          // Prelim | Validated
+  analyzed_time TIMESTAMP,
+  reporting_limit DOUBLE,
+  uncertainty DOUBLE,
+  PRIMARY KEY(id)
+);
+
+CREATE NODE TABLE WorkOrder(id STRING, type STRING, ts TIMESTAMP, PRIMARY KEY(id));
+CREATE NODE TABLE Event(id STRING, type STRING, ts_start TIMESTAMP, ts_end TIMESTAMP, PRIMARY KEY(id));
+
+// ---------- REL TABLES ----------
+CREATE REL TABLE HAS_UNIT(FROM Site TO Unit);
+CREATE REL TABLE PART_OF(FROM Equipment TO Unit);
+
+CREATE REL TABLE PRODUCES_STREAM(FROM Unit TO Stream);
+CREATE REL TABLE HOLDS(FROM Tank TO Stream);
+CREATE REL TABLE FOR_STREAM(FROM SamplePoint TO Stream);
+
+CREATE REL TABLE MEASURES(FROM Analyzer TO Stream);
+CREATE REL TABLE HAS_TAG(FROM Analyzer TO Tag);
+
+CREATE REL TABLE USES_METHOD(FROM Instrument TO Method);
+CREATE REL TABLE MEASURES_ANALYTE(FROM Method TO Analyte);
+
+CREATE REL TABLE APPLIES_TO(FROM SpecLimit TO Stream);
+CREATE REL TABLE FOR_ANALYTE(FROM SpecLimit TO Analyte);
+
+CREATE REL TABLE SAMPLE_OF(FROM Sample TO Stream);
+CREATE REL TABLE FROM_POINT(FROM Sample TO SamplePoint);
+
+CREATE REL TABLE RESULT_OF(FROM TestResult TO Sample);
+CREATE REL TABLE TESTED_BY(FROM TestResult TO Instrument);
+CREATE REL TABLE TR_USES_METHOD(FROM TestResult TO Method);
+
+CREATE REL TABLE CALIBRATES(FROM WorkOrder TO Analyzer);
+CREATE REL TABLE WITHIN_UNIT(FROM Event TO Unit);
+
+CREATE REL TABLE SERVED_BY_TAG(FROM Analyte TO Tag);

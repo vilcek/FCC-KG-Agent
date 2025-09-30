@@ -1,0 +1,15 @@
+What are the streams, analyzers, analytes, and tags available for the FCC unit with ID FCCU1?
+
+What was the min, mean, and max RVP online value for 2025-09-10?
+
+Give me all available lab results, the corresponding dates, stream spec limits, and the percentage deviations from the target spec values.
+
+Show any 1-minute spikes > 0.25 psi in Gasoline RVP on 2025-09-10
+
+What is the latest work order for the RVP analyzer, if any?
+
+At the time of sample draw for the latest Sulfur lab result on Gasoline, what was the online sulfur average over ±10 minutes, and the bias (lab − online)?
+
+Create a new table named test in the time series database
+
+Create a new stream with ID FCCU1-GASOLINE-TEST and then link the FCC unit with ID FCCU1 to it with the relation PRODUCES_STREAM

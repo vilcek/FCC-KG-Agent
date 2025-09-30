@@ -1,0 +1,160 @@
+// ----- Site & Unit
+CREATE (:Site {id:'SITE1', name:'Example Refinery'});
+CREATE (:Unit {id:'FCCU1', name:'FCC Unit #1', type:'FCC'});
+
+MATCH (s:Site {id:'SITE1'}), (u:Unit {id:'FCCU1'})
+CREATE (s)-[:HAS_UNIT]->(u);
+
+// ----- Equipment
+CREATE (:Equipment {id:'FCCU1-RISER', tag:'R-100', type:'Riser'});
+CREATE (:Equipment {id:'FCCU1-REGEN', tag:'RG-100', type:'Regenerator'});
+CREATE (:Equipment {id:'FCCU1-MF',    tag:'C-100', type:'MainFractionator'});
+
+MATCH (u:Unit {id:'FCCU1'})
+MATCH (e1:Equipment {id:'FCCU1-RISER'}),(e2:Equipment {id:'FCCU1-REGEN'}),(e3:Equipment {id:'FCCU1-MF'})
+CREATE (e1)-[:PART_OF]->(u),(e2)-[:PART_OF]->(u),(e3)-[:PART_OF]->(u);
+
+// ----- Streams
+CREATE (:Stream {id:'FCCU1-GASOLINE', name:'FCC Gasoline', phase:'LIQUID'});
+CREATE (:Stream {id:'FCCU1-LPG',      name:'FCC LPG',      phase:'GAS'});
+CREATE (:Stream {id:'FCCU1-LCO',      name:'Light Cycle Oil', phase:'LIQUID'});
+CREATE (:Stream {id:'FCCU1-SLURRY',   name:'Slurry', phase:'LIQUID'});
+
+MATCH (u:Unit {id:'FCCU1'}),
+      (gas:Stream {id:'FCCU1-GASOLINE'}),(lpg:Stream {id:'FCCU1-LPG'}),
+      (lco:Stream {id:'FCCU1-LCO'}),(sl:Stream {id:'FCCU1-SLURRY'})
+CREATE (u)-[:PRODUCES_STREAM]->(gas)
+      ,(u)-[:PRODUCES_STREAM]->(lpg)
+      ,(u)-[:PRODUCES_STREAM]->(lco)
+      ,(u)-[:PRODUCES_STREAM]->(sl);
+
+// ----- Sample points
+CREATE (:SamplePoint {id:'SP-GAS-01', name:'Gasoline Draw @ MF Sidecut', location:'Main Fractionator Deck 3'});
+CREATE (:SamplePoint {id:'SP-LPG-01', name:'LPG Rack Sample',            location:'Gas Plant'});
+CREATE (:SamplePoint {id:'SP-LCO-01', name:'LCO Draw @ Pump-around',     location:'Main Fractionator'});
+
+MATCH (gas:Stream {id:'FCCU1-GASOLINE'}),(lpg:Stream {id:'FCCU1-LPG'}),(lco:Stream {id:'FCCU1-LCO'}),
+      (spG:SamplePoint {id:'SP-GAS-01'}),(spLPG:SamplePoint {id:'SP-LPG-01'}),(spLCO:SamplePoint {id:'SP-LCO-01'})
+CREATE (spG)-[:FOR_STREAM]->(gas)
+      ,(spLPG)-[:FOR_STREAM]->(lpg)
+      ,(spLCO)-[:FOR_STREAM]->(lco);
+
+// ----- Analyzers & tags
+CREATE (:Analyzer {id:'AN-SULF-GAS-01', name:'UVF S Analyzer',      type:'UVF'});
+CREATE (:Analyzer {id:'AN-GC-LPG-01',   name:'LPG GC',              type:'GC'});
+CREATE (:Analyzer {id:'AN-RVP-GAS-01',  name:'Online RVP Analyzer', type:'RVP'});
+CREATE (:Analyzer {id:'AN-DENS-LCO-01', name:'Online Density Meter',type:'Densitometer'});
+CREATE (:Tag {id:'TAG:S_GAS_PPM',        name:'Gasoline Sulfur', eng_unit:'ppm'});
+CREATE (:Tag {id:'TAG:PROPYLENE_MOLPCT', name:'Propylene',       eng_unit:'mol%'});
+CREATE (:Tag {id:'TAG:RVP_GAS_PSI',      name:'Gasoline RVP',    eng_unit:'psi'});
+CREATE (:Tag {id:'TAG:LCO_RHO_KGPM3',    name:'LCO Density',     eng_unit:'kg/m3'});
+
+MATCH (aS:Analyzer {id:'AN-SULF-GAS-01'}),(aGC:Analyzer {id:'AN-GC-LPG-01'}),(aRVP:Analyzer {id:'AN-RVP-GAS-01'}),(aRHO:Analyzer {id:'AN-DENS-LCO-01'}),
+      (gas:Stream {id:'FCCU1-GASOLINE'}),(lpg:Stream {id:'FCCU1-LPG'}),(lco:Stream {id:'FCCU1-LCO'}),
+      (t1:Tag {id:'TAG:S_GAS_PPM'}),(t2:Tag {id:'TAG:PROPYLENE_MOLPCT'}),(t3:Tag {id:'TAG:RVP_GAS_PSI'}),(t4:Tag {id:'TAG:LCO_RHO_KGPM3'})
+CREATE (aS)-[:MEASURES]->(gas)
+      ,(aRVP)-[:MEASURES]->(gas)
+      ,(aGC)-[:MEASURES]->(lpg)
+      ,(aRHO)-[:MEASURES]->(lco)
+      ,(aS)-[:HAS_TAG]->(t1)
+      ,(aGC)-[:HAS_TAG]->(t2)
+      ,(aRVP)-[:HAS_TAG]->(t3)
+      ,(aRHO)-[:HAS_TAG]->(t4);
+
+// ----- Lab instruments & methods & analytes
+CREATE (:Instrument {id:'LAB-UVF-01', name:'UVF Sulfur', type:'UVF'});
+CREATE (:Instrument {id:'LAB-RVP-01', name:'RVP Apparatus', type:'RVP'});
+CREATE (:Instrument {id:'LAB-D4052-01', name:'Density Meter', type:'Oscillating U-Tube'});
+CREATE (:Instrument {id:'LAB-GC-01', name:'GC for LPG', type:'GC'});
+
+CREATE (:Method {code:'ASTM_D5453', name:'Total S by UVF'});
+CREATE (:Method {code:'ASTM_D5191', name:'RVP, Mini Method'});
+CREATE (:Method {code:'ASTM_D4052', name:'Density by Oscillating U-Tube'});
+CREATE (:Method {code:'ASTM_D2163', name:'Hydrocarbons in LPG by GC'});
+
+CREATE (:Analyte {code:'S',   name:'Sulfur',             default_unit:'ppm'});
+CREATE (:Analyte {code:'RVP', name:'Reid Vapor Pressure',default_unit:'psi'});
+CREATE (:Analyte {code:'C3_EQ', name:'Propylene',        default_unit:'mol%'});
+CREATE (:Analyte {code:'RHO', name:'Density',            default_unit:'kg/m3'});
+
+MATCH (instUVF:Instrument {id:'LAB-UVF-01'}),(instRVP:Instrument {id:'LAB-RVP-01'}),(instD:Instrument {id:'LAB-D4052-01'}),(instGC:Instrument {id:'LAB-GC-01'}),
+      (m5453:Method {code:'ASTM_D5453'}),(m5191:Method {code:'ASTM_D5191'}),(m4052:Method {code:'ASTM_D4052'}),(m2163:Method {code:'ASTM_D2163'}),
+      (anS:Analyte {code:'S'}),(anRVP:Analyte {code:'RVP'}),(anRHO:Analyte {code:'RHO'}),(anC3:Analyte {code:'C3_EQ'})
+CREATE (instUVF)-[:USES_METHOD]->(m5453)
+      ,(instRVP)-[:USES_METHOD]->(m5191)
+      ,(instD)-[:USES_METHOD]->(m4052)
+      ,(instGC)-[:USES_METHOD]->(m2163)
+      ,(m5453)-[:MEASURES_ANALYTE]->(anS)
+      ,(m5191)-[:MEASURES_ANALYTE]->(anRVP)
+      ,(m4052)-[:MEASURES_ANALYTE]->(anRHO)
+      ,(m2163)-[:MEASURES_ANALYTE]->(anC3);
+
+// ----- Spec limits
+CREATE (:SpecLimit {id:'SPEC-GAS-S-001', limit_type:'MAX', lo:null, hi:10.0, basis:'instantaneous', valid_from:DATE("2025-01-01"), valid_to:null});
+CREATE (:SpecLimit {id:'SPEC-GAS-RVP-001', limit_type:'RANGE', lo:7.0, hi:9.0, basis:'lot', valid_from:DATE("2025-01-01"), valid_to:null});
+CREATE (:SpecLimit {id:'SPEC-LPG-C3EQ-001', limit_type:'RANGE', lo:25.0, hi:45.0, basis:'instantaneous', valid_from:DATE("2025-01-01"), valid_to:null});
+CREATE (:SpecLimit {id:'SPEC-LCO-RHO-001', limit_type:'RANGE', lo:880.0, hi:960.0, basis:'lot', valid_from:DATE("2025-01-01"), valid_to:null});
+
+MATCH (gas:Stream {id:'FCCU1-GASOLINE'}),(lpg:Stream {id:'FCCU1-LPG'}),(lco:Stream {id:'FCCU1-LCO'}),
+      (sl1:SpecLimit {id:'SPEC-GAS-S-001'}),(sl2:SpecLimit {id:'SPEC-GAS-RVP-001'}),(sl3:SpecLimit {id:'SPEC-LPG-C3EQ-001'}),(sl4:SpecLimit {id:'SPEC-LCO-RHO-001'}),
+      (anS:Analyte {code:'S'}),(anRVP:Analyte {code:'RVP'}),(anC3:Analyte {code:'C3_EQ'}),(anRHO:Analyte {code:'RHO'})
+CREATE (sl1)-[:APPLIES_TO]->(gas)
+      ,(sl1)-[:FOR_ANALYTE]->(anS)
+      ,(sl2)-[:APPLIES_TO]->(gas)
+      ,(sl2)-[:FOR_ANALYTE]->(anRVP)
+      ,(sl3)-[:APPLIES_TO]->(lpg)
+      ,(sl3)-[:FOR_ANALYTE]->(anC3)
+      ,(sl4)-[:APPLIES_TO]->(lco)
+      ,(sl4)-[:FOR_ANALYTE]->(anRHO);
+
+// ----- Three samples, multi-analyte results
+CREATE (:Sample {id:'SMP-GAS-20250910-01', draw_time:TIMESTAMP("2025-09-10 08:15:00"), receive_time:TIMESTAMP("2025-09-10 08:35:00"), collector_id:'OP-231'});
+CREATE (:Sample {id:'SMP-LPG-20250910-01', draw_time:TIMESTAMP("2025-09-10 10:30:00"), receive_time:TIMESTAMP("2025-09-10 10:40:00"), collector_id:'OP-118'});
+CREATE (:Sample {id:'SMP-LCO-20250910-01', draw_time:TIMESTAMP("2025-09-10 12:00:00"), receive_time:TIMESTAMP("2025-09-10 12:15:00"), collector_id:'OP-305'});
+
+MATCH (gas:Stream {id:'FCCU1-GASOLINE'}),(lpg:Stream {id:'FCCU1-LPG'}),(lco:Stream {id:'FCCU1-LCO'}),
+      (spG:SamplePoint {id:'SP-GAS-01'}),(spLPG:SamplePoint {id:'SP-LPG-01'}),(spLCO:SamplePoint {id:'SP-LCO-01'}),
+      (sm1:Sample {id:'SMP-GAS-20250910-01'}),(sm2:Sample {id:'SMP-LPG-20250910-01'}),(sm3:Sample {id:'SMP-LCO-20250910-01'})
+CREATE (sm1)-[:SAMPLE_OF]->(gas),(sm1)-[:FROM_POINT]->(spG)
+      ,(sm2)-[:SAMPLE_OF]->(lpg),(sm2)-[:FROM_POINT]->(spLPG)
+      ,(sm3)-[:SAMPLE_OF]->(lco),(sm3)-[:FROM_POINT]->(spLCO);
+
+// Gasoline results: Sulfur + RVP
+CREATE (:TestResult {id:'TR-GAS-S-20250910-01', value:8.2, unit:'ppm', status:'Validated', analyzed_time:TIMESTAMP("2025-09-10 09:00:00"), reporting_limit:0.2, uncertainty:0.4});
+CREATE (:TestResult {id:'TR-GAS-RVP-20250910-01', value:8.4, unit:'psi', status:'Validated', analyzed_time:TIMESTAMP("2025-09-10 09:00:00"), reporting_limit:0.05, uncertainty:0.1});
+
+MATCH (tr1:TestResult {id:'TR-GAS-S-20250910-01'}),(tr2:TestResult {id:'TR-GAS-RVP-20250910-01'}),
+      (sm1:Sample {id:'SMP-GAS-20250910-01'}),
+      (instUVF:Instrument {id:'LAB-UVF-01'}),(instRVP:Instrument {id:'LAB-RVP-01'}),
+      (m5453:Method {code:'ASTM_D5453'}),(m5191:Method {code:'ASTM_D5191'})
+CREATE (tr1)-[:RESULT_OF]->(sm1),(tr1)-[:TESTED_BY]->(instUVF),(tr1)-[:TR_USES_METHOD]->(m5453)
+      ,(tr2)-[:RESULT_OF]->(sm1),(tr2)-[:TESTED_BY]->(instRVP),(tr2)-[:TR_USES_METHOD]->(m5191);
+
+// LPG result: Propylene
+CREATE (:TestResult {id:'TR-LPG-C3EQ-20250910-01', value:38.7, unit:'mol%', status:'Validated', analyzed_time:TIMESTAMP("2025-09-10 11:05:00"), reporting_limit:0.1, uncertainty:0.5});
+MATCH (tr3:TestResult {id:'TR-LPG-C3EQ-20250910-01'}),(sm2:Sample {id:'SMP-LPG-20250910-01'}),(instGC:Instrument {id:'LAB-GC-01'}),(m2163:Method {code:'ASTM_D2163'})
+CREATE (tr3)-[:RESULT_OF]->(sm2),(tr3)-[:TESTED_BY]->(instGC),(tr3)-[:TR_USES_METHOD]->(m2163);
+
+// LCO result: Density
+CREATE (:TestResult {id:'TR-LCO-RHO-20250910-01', value:922.5, unit:'kg/m3', status:'Validated', analyzed_time:TIMESTAMP("2025-09-10 12:30:00"), reporting_limit:0.1, uncertainty:0.2});
+MATCH (tr4:TestResult {id:'TR-LCO-RHO-20250910-01'}),(sm3:Sample {id:'SMP-LCO-20250910-01'}),(instD:Instrument {id:'LAB-D4052-01'}),(m4052:Method {code:'ASTM_D4052'})
+CREATE (tr4)-[:RESULT_OF]->(sm3),(tr4)-[:TESTED_BY]->(instD),(tr4)-[:TR_USES_METHOD]->(m4052);
+
+// --- Analyte -> Tag mapping (lets the agent discover the DuckDB symbol)
+MATCH (an:Analyte {code:'S'}),(t:Tag {id:'TAG:S_GAS_PPM'})
+OPTIONAL MATCH (an)-[r:SERVED_BY_TAG]->(t) WITH an, t, r WHERE r IS NULL
+CREATE (an)-[:SERVED_BY_TAG]->(t);
+MATCH (an:Analyte {code:'RVP'}), (t:Tag {id:'TAG:RVP_GAS_PSI'})
+OPTIONAL MATCH (an)-[r:SERVED_BY_TAG]->(t) WITH an, t, r WHERE r IS NULL
+CREATE (an)-[:SERVED_BY_TAG]->(t);
+MATCH (an:Analyte {code:'C3_EQ'}),(t:Tag {id:'TAG:PROPYLENE_MOLPCT'})
+OPTIONAL MATCH (an)-[r:SERVED_BY_TAG]->(t) WITH an, t, r WHERE r IS NULL
+CREATE (an)-[:SERVED_BY_TAG]->(t);
+MATCH (an:Analyte {code:'RHO'}), (t:Tag {id:'TAG:LCO_RHO_KGPM3'})
+OPTIONAL MATCH (an)-[r:SERVED_BY_TAG]->(t) WITH an, t, r WHERE r IS NULL
+CREATE (an)-[:SERVED_BY_TAG]->(t);
+
+// --- Optional calibration work orders (useful for rules/guardrails)
+MATCH (aRVP:Analyzer {id:'AN-RVP-GAS-01'}),(aRHO:Analyzer {id:'AN-DENS-LCO-01'})
+CREATE (:WorkOrder {id:'WO-CAL-RVP-20250909', type:'Calibration', ts:TIMESTAMP("2025-09-09 06:00:00")})-[:CALIBRATES]->(aRVP)
+      ,(:WorkOrder {id:'WO-CAL-RHO-20250909', type:'Calibration', ts:TIMESTAMP("2025-09-09 07:30:00")})-[:CALIBRATES]->(aRHO);
