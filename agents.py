@@ -14,7 +14,7 @@ except Exception:
 from pydantic import BaseModel
 
 
-class LLMAgent:
+class SKAgent:
     def __init__(
         self,
         llm_api_key: str,
@@ -27,7 +27,7 @@ class LLMAgent:
         memory_max_tokens: int = 10_000,
         **kwargs,
     ):
-        """Initialize the LLMAgent.
+        """Initialize the SKAgent.
 
         Args:
             llm_api_key: The API key for the LLM service.

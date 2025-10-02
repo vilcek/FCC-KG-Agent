@@ -55,10 +55,10 @@ class KGBuilder:
         self._seed_data = seed_data
 
         self.kuzu_db, self.kuzu_conn = self._init_kuzu(rebuild=rebuild)
-        self.duck_conn = self._init_duckdb(rebuild=rebuild)
+        self.duck_conn, duckdb_seeded = self._init_duckdb(rebuild=rebuild)
 
-        # Always seed time-series data on rebuild for deterministic demo environment
-        if rebuild:
+        # Ensure time-series data is present on fresh or rebuilt databases
+        if duckdb_seeded:
             self.seed_duckdb_timeseries()
 
     # ---- Public helpers ----
@@ -92,11 +92,15 @@ class KGBuilder:
 
     def _init_kuzu(self, rebuild: bool):
         db_path = self.graph_db_path
-        if rebuild and db_path.exists():
-            if db_path.is_dir():
-                shutil.rmtree(db_path)
-            else:
-                db_path.unlink()
+        wal_path = db_path.with_suffix(db_path.suffix + ".wal")
+        if rebuild:
+            if db_path.exists():
+                if db_path.is_dir():
+                    shutil.rmtree(db_path)
+                else:
+                    db_path.unlink()
+            if wal_path.exists():
+                wal_path.unlink()
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db = kuzu.Database(str(db_path))
         conn = kuzu.Connection(db)
@@ -121,12 +125,27 @@ class KGBuilder:
 
     def _init_duckdb(self, rebuild: bool):
         con = duckdb.connect(self.ts_db_path)
+        needs_setup = rebuild
+
         if rebuild:
             con.execute("DROP SCHEMA IF EXISTS ts CASCADE;")
-            con.execute("CREATE SCHEMA ts;")
+
+        if not needs_setup:
+            result = con.execute(
+                """
+                SELECT 1
+                FROM information_schema.tables
+                WHERE table_schema = 'ts' AND table_name = 'timeseries'
+                LIMIT 1;
+                """
+            ).fetchone()
+            needs_setup = result is None
+
+        if needs_setup:
+            con.execute("CREATE SCHEMA IF NOT EXISTS ts;")
             con.execute(
                 """
-                CREATE TABLE ts.timeseries(
+                CREATE TABLE IF NOT EXISTS ts.timeseries(
                     tag_id TEXT,
                     ts TIMESTAMPTZ,
                     value DOUBLE,
@@ -134,8 +153,10 @@ class KGBuilder:
                 );
                 """
             )
+            con.execute("DROP INDEX IF EXISTS idx_timeseries_tag_ts;")
             con.execute("CREATE INDEX idx_timeseries_tag_ts ON ts.timeseries(tag_id, ts);")
-        return con
+
+        return con, needs_setup
 
     # ---- Time-series seeding ----
     def simulate_series(

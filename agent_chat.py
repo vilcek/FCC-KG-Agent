@@ -4,7 +4,7 @@
 Features:
   * Automatically (re)builds the local Kùzu + DuckDB demo databases on demand
   * Loads environment variables from a .env file if present
-  * Instantiates `KGAgentPlugin` and wires it into `LLMAgent`
+  * Instantiates `KGAgentPlugin` and wires it into `SKAgent`
   * Simple async REPL supporting slash commands
 
 Slash Commands:
@@ -48,7 +48,7 @@ from dotenv import load_dotenv
 # Local imports
 from databases import KGBuilder, DATABASES_DIR
 from plugins import KGAgentPlugin
-from agents import LLMAgent
+from agents import SKAgent
 
 # -------------- Utility Output Helpers --------------
 
@@ -72,7 +72,7 @@ class ChatSession:
         self.args = args
         self.builder: Optional[KGBuilder] = None
         self.plugin: Optional[KGAgentPlugin] = None
-        self.agent: Optional[LLMAgent] = None
+        self.agent: Optional[SKAgent] = None
         self.system_prompt: str = args.system or ("""
             You are an expert in answering questions about processes in a FCC petrochemical plant unit.
             Use the provided tools as needed, but when you need to query the knowledge graph or time-series database, prefer the tools that don't require you to write Cypher or SQL directly.
@@ -127,7 +127,7 @@ class ChatSession:
         missing = [v for v in required_env if not os.getenv(v)]
         if missing:
             raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-        self.agent = LLMAgent(
+        self.agent = SKAgent(
             llm_endpoint=os.getenv("AOAI_ENDPOINT"),
             llm_api_key=os.getenv("AOAI_API_KEY"),
             llm_deployment_name=os.getenv("AOAI_DEPLOYMENT_NAME"),
