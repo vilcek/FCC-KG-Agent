@@ -24,9 +24,10 @@ Environment Variables (required):
   AOAI_DEPLOYMENT_NAME
 
 Optional Arguments:
-  --rebuild        Force rebuild of databases at startup
-  --no-plugin      Start without the KG plugin (raw LLM)
-  --system PROMPT  Provide/override initial system prompt
+    --rebuild              Force rebuild of databases at startup
+    --no-plugin            Start without the KG plugin (raw LLM)
+    --system PROMPT        Provide/override initial system prompt
+    --agent-type {sk,af}   Choose Semantic Kernel (sk) or Agent Framework (af) agent
 
 Examples:
   python agent_chat.py --rebuild
@@ -41,14 +42,14 @@ import sys
 import textwrap
 import shutil
 import pathlib
-from typing import Optional
+from typing import Optional, Any, cast
 
 from dotenv import load_dotenv
 
 # Local imports
 from databases import KGBuilder, DATABASES_DIR
-from plugins import KGAgentPlugin
-from agents import SKAgent
+from plugins import KGAgentPlugin, get_af_tools
+from agents import SKAgent, AFAgent
 
 # -------------- Utility Output Helpers --------------
 
@@ -72,7 +73,8 @@ class ChatSession:
         self.args = args
         self.builder: Optional[KGBuilder] = None
         self.plugin: Optional[KGAgentPlugin] = None
-        self.agent: Optional[SKAgent] = None
+        self.agent: Optional[SKAgent | AFAgent] = None
+        self.af_tools: Optional[list[Any]] = None
         self.system_prompt: str = args.system or ("""
             You are an expert in answering questions about processes in a FCC petrochemical plant unit.
             Use the provided tools as needed, but when you need to query the knowledge graph or time-series database, prefer the tools that don't require you to write Cypher or SQL directly.
@@ -106,10 +108,13 @@ class ChatSession:
             self._purge_databases_dir()
         self.builder = KGBuilder(rebuild=do_rebuild)
         kconn, dconn = self.builder.connections
-        if not self.args.no_plugin:
-            self.plugin = KGAgentPlugin(kconn, dconn)
-        else:
+        self.af_tools = None
+        if self.args.no_plugin:
             self.plugin = None
+        else:
+            self.plugin = KGAgentPlugin(kconn, dconn)
+            if self.args.agent_type == "af":
+                self.af_tools = get_af_tools(kconn, dconn)
 
     def clear_screen(self):
         # Use ANSI escape sequence to clear screen & move cursor home; fallback to os.system
@@ -127,14 +132,32 @@ class ChatSession:
         missing = [v for v in required_env if not os.getenv(v)]
         if missing:
             raise RuntimeError(f"Missing required environment variables: {', '.join(missing)}")
-        self.agent = SKAgent(
-            llm_endpoint=os.getenv("AOAI_ENDPOINT"),
-            llm_api_key=os.getenv("AOAI_API_KEY"),
-            llm_deployment_name=os.getenv("AOAI_DEPLOYMENT_NAME"),
-            agent_name="kg_agent",
-            system_prompt=self.system_prompt,
-            plugin=self.plugin,
-        )
+        agent_type = self.args.agent_type
+        endpoint = cast(str, os.getenv("AOAI_ENDPOINT"))
+        api_key = cast(str, os.getenv("AOAI_API_KEY"))
+        deployment = cast(str, os.getenv("AOAI_DEPLOYMENT_NAME"))
+
+        agent_label = "Agent Framework" if agent_type == "af" else "Semantic Kernel"
+        print(color(f"Initializing {agent_label} agent...", "cyan"))
+
+        if agent_type == "af":
+            self.agent = AFAgent(
+                llm_endpoint=endpoint,
+                llm_api_key=api_key,
+                llm_deployment_name=deployment,
+                agent_name="kg_agent",
+                system_prompt=self.system_prompt,
+                tools=self.af_tools,
+            )
+        else:
+            self.agent = SKAgent(
+                llm_endpoint=endpoint,
+                llm_api_key=api_key,
+                llm_deployment_name=deployment,
+                agent_name="kg_agent",
+                system_prompt=self.system_prompt,
+                plugin=self.plugin,
+            )
 
     def rebuild_everything(self):
         print(color("Rebuilding databases and recreating agent...", "yellow"))
@@ -319,6 +342,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument('--rebuild', action='store_true', help='Rebuild & reseed databases at startup')
     p.add_argument('--no-plugin', action='store_true', help='Start without the KG plugin (plain LLM)')
     p.add_argument('--system', type=str, help='Override initial system prompt')
+    def _agent_type(value: str) -> str:
+        norm = value.lower()
+        if norm not in {'sk', 'af'}:
+            raise argparse.ArgumentTypeError("agent-type must be 'sk' or 'af'")
+        return norm
+    p.add_argument('--agent-type', type=_agent_type, default='sk', help='Select which agent implementation to use (sk or af)')
     return p.parse_args(argv)
 
 

@@ -4,4 +4,5 @@ kuzu
 duckdb
 openai
 semantic_kernel
+agent-framework[azure-ai]
 tiktoken
