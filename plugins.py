@@ -7,6 +7,8 @@ import re
 import pandas as pd
 import duckdb
 import kuzu
+from datetime import date, datetime, time
+from decimal import Decimal
 
 
 class Tag(TypedDict):
@@ -34,6 +36,37 @@ class TimeSeriesWindowMean(TypedDict):
 
 
 # ---------------- Module-Level Helpers ----------------
+
+
+def _json_safe(value: Any) -> Any:
+    """Convert common non-JSON-serializable objects to safe representations."""
+
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, pd.Timestamp):
+        return value.isoformat()
+    if isinstance(value, (datetime, date, time)):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, bytes):
+        try:
+            return value.decode("utf-8")
+        except Exception:
+            return value.hex()
+    if isinstance(value, dict):
+        return {str(k): _json_safe(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [_json_safe(v) for v in value]
+    if hasattr(value, "item"):
+        try:
+            return _json_safe(value.item())  # type: ignore[call-arg]
+        except Exception:
+            pass
+    return str(value)
 
 
 def load_kuzu_schema_text() -> str:
@@ -206,7 +239,7 @@ def graph_query(
         for i, row in enumerate(rows):
             if i >= limit:
                 break
-            out.append({cols[j]: row[j] for j in range(min(len(cols), len(row)))})
+            out.append({cols[j]: _json_safe(row[j]) for j in range(min(len(cols), len(row)))})
         return out
     except Exception as e:
         return f"Error: {e}"
@@ -255,7 +288,7 @@ def ts_query(
         for i, row in enumerate(rows):
             if i >= limit:
                 break
-            out.append({cols[j]: row[j] for j in range(min(len(cols), len(row)))})
+            out.append({cols[j]: _json_safe(row[j]) for j in range(min(len(cols), len(row)))})
         return out
     except Exception as e:
         return f"Error: {e}"

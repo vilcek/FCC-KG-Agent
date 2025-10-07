@@ -19,15 +19,19 @@ Regular input lines are sent to the agent. The function/tool call trace prints n
 arguments, and results (when available) for transparency/debugging.
 
 Environment Variables (required):
-  AOAI_ENDPOINT
-  AOAI_API_KEY
-  AOAI_DEPLOYMENT_NAME
+    AOAI_ENDPOINT
+    AOAI_API_KEY
+    AOAI_DEPLOYMENT_NAME
+
+Additional Environment Variables (required when --agent-type=afaf):
+    AZURE_AI_PROJECT_ENDPOINT
 
 Optional Arguments:
     --rebuild              Force rebuild of databases at startup
     --no-plugin            Start without the KG plugin (raw LLM)
     --system PROMPT        Provide/override initial system prompt
-    --agent-type {sk,af}   Choose Semantic Kernel (sk) or Agent Framework (af) agent
+    --agent-type {sk,af,afaf}   Choose Semantic Kernel (sk), Agent Framework (af), or Azure AI Foundry Agent Framework (afaf) agent
+    --recreate-agent       When using --agent-type=afaf, delete and recreate the Azure AI Foundry agent before use
 
 Examples:
   python agent_chat.py --rebuild
@@ -49,7 +53,7 @@ from dotenv import load_dotenv
 # Local imports
 from databases import KGBuilder, DATABASES_DIR
 from plugins import KGAgentPlugin, get_af_tools
-from agents import SKAgent, AFAgent
+from agents import SKAgent, AFAgent, AFAFAgent
 
 # -------------- Utility Output Helpers --------------
 
@@ -73,7 +77,7 @@ class ChatSession:
         self.args = args
         self.builder: Optional[KGBuilder] = None
         self.plugin: Optional[KGAgentPlugin] = None
-        self.agent: Optional[SKAgent | AFAgent] = None
+        self.agent: Optional[SKAgent | AFAgent | AFAFAgent] = None
         self.af_tools: Optional[list[Any]] = None
         self.system_prompt: str = args.system or ("""
             You are an expert in answering questions about processes in a FCC petrochemical plant unit.
@@ -113,7 +117,7 @@ class ChatSession:
             self.plugin = None
         else:
             self.plugin = KGAgentPlugin(kconn, dconn)
-            if self.args.agent_type == "af":
+            if self.args.agent_type in {"af", "afaf"}:
                 self.af_tools = get_af_tools(kconn, dconn)
 
     def clear_screen(self):
@@ -127,7 +131,7 @@ class ChatSession:
         except Exception:
             os.system('cls' if os.name == 'nt' else 'clear')
 
-    def make_agent(self):
+    async def make_agent(self):
         required_env = ["AOAI_ENDPOINT", "AOAI_API_KEY", "AOAI_DEPLOYMENT_NAME"]
         missing = [v for v in required_env if not os.getenv(v)]
         if missing:
@@ -136,8 +140,23 @@ class ChatSession:
         endpoint = cast(str, os.getenv("AOAI_ENDPOINT"))
         api_key = cast(str, os.getenv("AOAI_API_KEY"))
         deployment = cast(str, os.getenv("AOAI_DEPLOYMENT_NAME"))
+        recreate_agent_flag = getattr(self.args, "recreate_agent", False)
 
-        agent_label = "Agent Framework" if agent_type == "af" else "Semantic Kernel"
+        if recreate_agent_flag and agent_type != "afaf":
+            print(color("--recreate-agent has no effect unless --agent-type=afaf", "yellow"))
+
+        project_endpoint: str | None = None
+        if agent_type == "afaf":
+            project_endpoint = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
+            if not project_endpoint:
+                if ".projects.azureai.azure.com" in endpoint.lower():
+                    project_endpoint = endpoint
+                else:
+                    raise RuntimeError(
+                        "AZURE_AI_PROJECT_ENDPOINT must be set to your Azure AI Foundry project endpoint when using --agent-type=afaf."
+                    )
+
+        agent_label = "Agent Framework" if agent_type == "af" else ("Azure AI Foundry Agent Framework" if agent_type == "afaf" else "Semantic Kernel")
         print(color(f"Initializing {agent_label} agent...", "cyan"))
 
         if agent_type == "af":
@@ -149,6 +168,19 @@ class ChatSession:
                 system_prompt=self.system_prompt,
                 tools=self.af_tools,
             )
+        elif agent_type == "afaf":
+            if recreate_agent_flag:
+                print(color("Recreating Azure AI Foundry agent before startup...", "yellow"))
+            self.agent = await AFAFAgent.create(
+                llm_endpoint=endpoint,
+                llm_api_key=api_key,
+                llm_deployment_name=deployment,
+                agent_name="kg_agent",
+                system_prompt=self.system_prompt,
+                tools=self.af_tools,
+                project_endpoint=cast(str, project_endpoint),
+                recreate_agent=recreate_agent_flag,
+            )
         else:
             self.agent = SKAgent(
                 llm_endpoint=endpoint,
@@ -159,22 +191,22 @@ class ChatSession:
                 plugin=self.plugin,
             )
 
-    def rebuild_everything(self):
+    async def rebuild_everything(self):
         print(color("Rebuilding databases and recreating agent...", "yellow"))
         self.build_databases(rebuild=True)
-        self.make_agent()
+        await self.make_agent()
         print(color("Rebuild complete.", "green"))
 
-    def reset_agent(self):
+    async def reset_agent(self):
         print(color("Resetting agent (clearing conversation state)...", "yellow"))
         if self.agent and hasattr(self.agent, "reset_memory"):
             try:
                 self.agent.reset_memory()  # type: ignore[attr-defined]
             except Exception:
                 # Fallback to full recreation
-                self.make_agent()
+                await self.make_agent()
         else:
-            self.make_agent()
+            await self.make_agent()
         print(color("Agent reset.", "green"))
 
     def clear_memory(self):
@@ -238,7 +270,7 @@ class ChatSession:
         elif cmd == '/exit':
             raise EOFError
         elif cmd == '/rebuild':
-            self.rebuild_everything()
+            await self.rebuild_everything()
         elif cmd == '/steps':
             if not self.last_intermediate:
                 print(color("No previous intermediate steps.", "yellow"))
@@ -251,7 +283,7 @@ class ChatSession:
                 self.system_prompt = arg
                 print(color("System prompt updated. Use /reset to apply immediately.", "green"))
         elif cmd == '/reset':
-            self.reset_agent()
+            await self.reset_agent()
         elif cmd == '/memclear':
             self.clear_memory()
         elif cmd == '/clear':
@@ -316,7 +348,7 @@ class ChatSession:
 async def async_main(args: argparse.Namespace):
     session = ChatSession(args)
     session.build_databases(rebuild=args.rebuild)
-    session.make_agent()
+    await session.make_agent()
     # Clear screen on startup for clean session view
     session.clear_screen()
     print(color("Interactive agent chat. Type /help for commands.", "cyan"))
@@ -342,12 +374,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     p.add_argument('--rebuild', action='store_true', help='Rebuild & reseed databases at startup')
     p.add_argument('--no-plugin', action='store_true', help='Start without the KG plugin (plain LLM)')
     p.add_argument('--system', type=str, help='Override initial system prompt')
+    p.add_argument(
+        '--recreate-agent',
+        action='store_true',
+        help='When using --agent-type=afaf, delete and recreate the Azure AI Foundry agent before use',
+    )
     def _agent_type(value: str) -> str:
         norm = value.lower()
-        if norm not in {'sk', 'af'}:
-            raise argparse.ArgumentTypeError("agent-type must be 'sk' or 'af'")
+        if norm not in {'sk', 'af', 'afaf'}:
+            raise argparse.ArgumentTypeError("agent-type must be 'sk', 'af', or 'afaf'")
         return norm
-    p.add_argument('--agent-type', type=_agent_type, default='sk', help='Select which agent implementation to use (sk or af)')
+    p.add_argument(
+        '--agent-type',
+        type=_agent_type,
+        default='sk',
+        help='Select which agent implementation to use (sk, af, or afaf)',
+    )
     return p.parse_args(argv)
 
 

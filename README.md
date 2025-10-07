@@ -4,7 +4,7 @@ An interactive, tool-augmented LLM agent that can answer questions about a (toy)
 
 - A **Kùzu** graph database (knowledge graph of process, lab, analyzer, and specification entities)
 - A **DuckDB** time‑series store with simulated minute data for several analyzer tags
-- A **Semantic Kernel** powered agent that automatically decides when to call structured plugin functions (tools)
+- Pluggable agent runtimes: **Semantic Kernel**, **Microsoft Agent Framework**, or **Azure AI Foundry Agents**, each wired to the same guarded toolset
 
 The project demonstrates safe tool invocation, schema grounding, lightweight conversation memory, and guard‑railed freeform query execution.
 
@@ -39,6 +39,11 @@ AOAI_API_KEY="<your-key>"
 AOAI_DEPLOYMENT_NAME="<your-gpt-4o-or-gpt-4o-mini-deployment>"
 ```
 
+When running with `--agent-type=afaf` (Azure AI Foundry agents), also set:
+```
+AZURE_AI_PROJECT_ENDPOINT="https://<your-project>.projects.azureai.azure.com"
+```
+
 ### 3. Install Dependencies
 ```
 pip install -r requirements.txt
@@ -51,7 +56,22 @@ python agent_chat.py --rebuild
 ```
 `--rebuild` ensures a clean deterministic database state.
 
+Choose the agent runtime with `--agent-type`:
+
+- Semantic Kernel (default): `python agent_chat.py`
+- Microsoft Agent Framework Assistants: `python agent_chat.py --agent-type af`
+- Azure AI Foundry Agents: `python agent_chat.py --agent-type afaf [--recreate-agent]`
+
+`--recreate-agent` forces deletion/recreation of the persistent Azure AI Foundry agent, which is helpful when tweaking prompts or models.
+
 You should see: `Interactive agent chat. Type /help for commands.`
+
+### Agent Modes
+- **`SKAgent`** (Semantic Kernel): Streaming chat completions with automatic tool invocation via `ChatCompletionAgent`.
+- **`AFAgent`** (Microsoft Agent Framework): Wraps the Azure OpenAI Assistants-style runtime while preserving the same tool catalog.
+- **`AFAFAgent`** (Azure AI Foundry Agents): Provisions or reuses a persistent agent in Azure AI Foundry projects and reconnects on each run.
+
+All agent implementations share the same memory handling API (history, pruning, stats) and accept identical system prompts.
 
 ---
 ## Architecture Overview
@@ -61,23 +81,23 @@ sequenceDiagram
     autonumber
     participant U as User
     participant C as ChatSession (REPL)
-    participant A as LLMAgent (Semantic Kernel)
-    participant SK as SK Runtime
+    participant A as ConfiguredAgent (SK/AF/AF-AF)
+    participant R as LLM Runtime
     participant P as KGAgentPlugin
     participant G as Kùzu (Graph)
     participant T as DuckDB (Time-series)
 
     U->>C: Prompt / command
     C->>A: user message (+memory context)
-    A->>SK: streaming invoke
-    SK-->>A: intermediate tool call events
-    SK->>P: function call (e.g. latest_lab_vs_spec)
+    A->>R: streaming invoke / run request
+    R-->>A: intermediate tool call events
+    R->>P: function call (e.g. latest_lab_vs_spec)
     P->>G: Cypher read query
     P->>T: SQL read query
     G-->>P: rows
     T-->>P: rows
-    P-->>SK: structured result
-    SK-->>A: assistant completion
+    P-->>R: structured result
+    R-->>A: assistant completion
     A-->>C: response & call trace
     C-->>U: printed answer
 ```
@@ -95,6 +115,58 @@ Two helpful visualizations (see `schema_mermaid.md`):
 1. **ER Diagram** (entities + attributes)
 2. **Directed Relationship Graph** (semantics of edges)
 
+### Directed Relationship Graph
+```mermaid
+graph LR
+    subgraph Process
+        Site
+        Unit
+        Equipment
+        Stream
+        Tank
+        SamplePoint
+    end
+    subgraph Lab_and_QA
+        Analyzer
+        Instrument
+        Method
+        Analyte
+        SpecLimit
+        Sample
+        TestResult
+        WorkOrder
+        Event
+        Tag
+    end
+
+    Site -->|HAS_UNIT| Unit
+    Equipment -->|PART_OF| Unit
+    Unit -->|PRODUCES_STREAM| Stream
+    Tank -->|HOLDS| Stream
+    SamplePoint -->|FOR_STREAM| Stream
+
+    Analyzer -->|MEASURES| Stream
+    Analyzer -->|HAS_TAG| Tag
+
+    Instrument -->|USES_METHOD| Method
+    Method -->|MEASURES_ANALYTE| Analyte
+
+    SpecLimit -->|APPLIES_TO| Stream
+    SpecLimit -->|FOR_ANALYTE| Analyte
+
+    Sample -->|SAMPLE_OF| Stream
+    Sample -->|FROM_POINT| SamplePoint
+
+    TestResult -->|RESULT_OF| Sample
+    TestResult -->|TESTED_BY| Instrument
+    TestResult -->|TR_USES_METHOD| Method
+
+    WorkOrder -->|CALIBRATES| Analyzer
+    Event -->|WITHIN_UNIT| Unit
+
+    Analyte -->|SERVED_BY_TAG| Tag
+```
+
 Core conceptual clusters:
 - Process topology: `Site -> Unit -> (Equipment | Stream)`
 - Sampling & analysis: `SamplePoint`, `Sample`, `TestResult`, `Instrument`, `Method`, `Analyte`
@@ -111,10 +183,10 @@ Time‑series layer (DuckDB, schema `ts`):
 
 | Component | File | Responsibility |
 |-----------|------|----------------|
-| REPL / CLI driver | `agent_chat.py` | Parses args, loads env, (re)builds DBs, instantiates agent, interactive loop, slash commands |
-| Agent wrapper | `agents.py` | Wraps Semantic Kernel `ChatCompletionAgent`, manages lightweight conversation memory & token pruning |
+| REPL / CLI driver | `agent_chat.py` | Parses args, loads env, (re)builds DBs, selects agent runtime, interactive loop, slash commands |
+| Agent wrappers | `agents.py` | Provides `SKAgent`, `AFAgent`, and `AFAFAgent` with shared memory management, tool wiring, and token pruning |
 | Databases bootstrap | `databases.py` | Builds / seeds Kùzu & DuckDB stores, simulates time‑series, exposes connections |
-| Plugin (tools) | `plugins.py` | Defines structured functions exposed to LLM (schema introspection, domain lookups, guarded generic queries, calculator) |
+| Plugin (tools) | `plugins.py` | Defines structured functions and Agent Framework tool wrappers (schema introspection, domain lookups, guarded generic queries, calculator) |
 | Schema DDL | `kuzu_ddl.txt` | Graph DDL (node + rel tables) |
 | Seed data | `kuzu_seed_data.txt` | Deterministic domain dataset |
 | Mermaid diagrams | `schema_mermaid.md` | Graph schema visualizations |
@@ -130,15 +202,15 @@ Run `/help` in the REPL for the live list. Summary:
 | `/steps` | Show last response tool/function call trace |
 | `/system <text>` | Replace system prompt (needs `/reset` to apply) |
 | `/reset` | Reset conversation (memory) while keeping system prompt |
-| `/memclear` | Clear memory via agent helper (does not rebuild) |
+| `/memclear` | Clear conversation history without recreating the agent |
 | `/history [N]` | Show all or last N messages from maintained history |
-| `/memstats` | Token & message usage estimates |
-| `/clear` | Clear terminal screen |
+| `/memstats` | Display token/memory utilization estimates |
+| `/clear` | Clear the terminal screen |
 | `/exit` | Quit |
 
 ---
 ## Plugin Tool Reference
-All functions are decorated with `@kernel_function` so they are discoverable & invokable by the LLM. Prefer the **specialized** tools before falling back to generic query executors.
+All functions are decorated with `@kernel_function` for Semantic Kernel and mirrored via `get_af_tools` for Agent Framework runtimes. Prefer the **specialized** tools before falling back to generic query executors.
 
 | Function | Type | Description | Notes |
 |----------|------|-------------|-------|
@@ -178,13 +250,13 @@ Changing instructions with `/system` allows quick iteration while preserving dat
 
 ---
 ## Conversation Memory
-Implemented in `LLMAgent`:
-- Stores lightweight list of `{role, content}` pairs (user & assistant)
-- Estimates tokens (via `tiktoken` when available, heuristic fallback otherwise)
-- Prunes oldest non‑system messages to stay within `memory_max_tokens` (default 10k)
-- Inspect usage with `/memstats`; clear with `/memclear` or fully reset with `/reset`
+Implemented consistently across `SKAgent`, `AFAgent`, and `AFAFAgent`:
+- Maintain lightweight `{role, content}` message history for REPL inspection
+- Estimate tokens via `tiktoken` when available (heuristic fallback otherwise)
+- Prune oldest non-system messages to stay within `memory_max_tokens` (default 10k)
+- Surface management helpers through `/memstats`, `/memclear`, and `/reset`
 
-Design choice: maintain an independent history list (instead of relying solely on `ChatHistoryAgentThread`) for consistent token accounting and REPL inspection.
+Each agent keeps its own thread/session handle so you can switch runtimes without losing the conversation API.
 
 ---
 ## Sample Questions
@@ -201,10 +273,11 @@ Tip: The agent will often first call `graph_schema_summary` or `ts_schema` when 
 ## Extending the System
 
 ### Add a New Tool
-1. Implement a method in `KGAgentPlugin`.
-2. Decorate with `@kernel_function` (unique `name=` & meaningful `description=`).
-3. Return only JSON‑serializable types (ints, floats, strings, dict/list of same) or TypedDict.
-4. Rebuild or use `/rebuild` to ensure hot‑reload (simplest path).
+1. Implement a **module-level helper function** in `plugins.py` that contains the shared logic and returns JSON-serializable structures (ints, floats, strings, dict/list of same) or a `TypedDict`.
+2. Expose that helper to Semantic Kernel agents by adding a thin wrapper method inside `KGAgentPlugin` decorated with `@kernel_function`.
+3. Expose the same helper to Microsoft Agent Framework agents by registering an `@ai_function` wrapper within `get_af_tools`.
+4. Update both wrappers with matching names/descriptions so tool discovery stays consistent across runtimes.
+5. Rebuild or use `/rebuild` to ensure the new tool is picked up by the chat session.
 
 ### Add New Data
 - Extend `kuzu_seed_data.txt` with additional entities / relationships.
@@ -216,7 +289,7 @@ Tip: The agent will often first call `graph_schema_summary` or `ts_schema` when 
 - Add derived helper tools (e.g., `recent_lab_results(stream_id)` returning tidy tables).
 
 ### Response Structuring
-You can pass a pydantic `response_format` model to `LLMAgent` (not currently used) to coerce model outputs into structured JSON for downstream automation.
+You can pass a pydantic `response_format` model when constructing `SKAgent`, `AFAgent`, or `AFAFAgent` to coerce model outputs into structured JSON for downstream automation.
 
 ---
 ## Development & Troubleshooting
@@ -227,4 +300,4 @@ You can pass a pydantic `response_format` model to `LLMAgent` (not currently use
 | `kuzu` import/build failure | Ensure platform wheel availability; upgrade pip; check C++ toolchain |
 | Tool calls not appearing | Use `/steps`; confirm plugin not disabled via `--no-plugin` |
 | Empty results for obvious queries | Run `/rebuild` to ensure seed data loaded |
-| High token utilization | `/memclear` or adjust `memory_max_tokens` in `LLMAgent` init |
+| High token utilization | `/memclear` or adjust `memory_max_tokens` when instantiating the agent (`SKAgent`/`AFAgent`/`AFAFAgent`) |
